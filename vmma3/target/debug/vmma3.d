@@ -1,1 +1,1 @@
-/Users/gabrielcarson/Desktop/VM-Project-Machine/vmma3/target/debug/vmma3: /Users/gabrielcarson/Desktop/VM-Project-Machine/vmma3/src/instruction.rs /Users/gabrielcarson/Desktop/VM-Project-Machine/vmma3/src/main.rs
+C:\Users\thany\Downloads\CS365\VM-Project-Machine\vmma3\target\debug\vmma3.exe: C:\Users\thany\Downloads\CS365\VM-Project-Machine\vmma3\src\instruction.rs C:\Users\thany\Downloads\CS365\VM-Project-Machine\vmma3\src\main.rs

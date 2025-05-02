@@ -21,7 +21,7 @@ pub fn push(sp: &mut usize, ram: &mut [u8], val: u32) {
 }
 
 pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bool {
-    use std::io::Write;
+   // use std::io::Write;
 
     if *pc + 4 > RAM_SIZE {
         return false;
@@ -75,13 +75,17 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
                 _ => return false,
             }
         }
-        0x1 => { //pop opcode
-            let raw_offset   = (instr >> 2) & 0x00FF_FFFF; // 26 bits
-            let offset_bytes = if raw_offset == 0 { 4 } else { (raw_offset << 2) as usize };
-        
-            // move the stack pointer up, but never past the last valid 4-byte word
+        0x1 => { // pop <imm>: immediate is a *byte* count (0 means “pop one word” = 4 bytes)
+            let raw_offset = (instr >> 2) & 0x00FF_FFFF;       // 26-bit immediate
+            let offset_bytes = if raw_offset == 0 {
+                4    // default pop one word
+            } else {
+                raw_offset as usize  // treat imm literally as bytes
+            };
+            // advance SP, but never past the last valid word
             *sp = (*sp + offset_bytes).min(RAM_SIZE.saturating_sub(4));
         }
+        
         0x2 => {
             let subcode = (instr >> 24) & 0xF;
             let rhs = pop(sp, ram);
@@ -239,7 +243,75 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
             push(sp, ram, signed);
         }
 
-        0x0 => return false,
+        0x5 => {
+            // Get 26-bit signed immediate
+            let raw = (instr >> 2) & 0x03FF_FFFF;
+            let mut offset = raw as i32;
+            if offset & (1 << 25) != 0 {
+                offset -= 1 << 26;
+            }
+        
+            // Push current PC to stack
+            push(sp, ram, *pc as u32);
+        
+            // Jump to target PC
+            let new_pc = (*pc as i32).wrapping_add(offset << 2);
+            if new_pc >= 0 && (new_pc as usize) < RAM_SIZE {
+                *pc = new_pc as usize;
+            } else {
+                eprintln!("Invalid call offset: jumping to {:#X}", new_pc);
+                return false;
+            }
+        }
+        
+        0x8 => {
+            // 1) Decode the 3-bit condition (bits 27:25)
+            let cond = (instr >> 25) & 0x7;
+        
+            // 2) Decode the 23-bit signed offset (bits 24:2)
+            let raw   = (instr >> 2) & 0x007F_FFFF;      // mask = (1<<23)-1
+            let mut off = raw as i32;
+            if (off & (1 << 22)) != 0 {                  // sign bit at 22
+                off -= 1 << 23;                          // sign-extend
+            }
+            let offset = off.wrapping_mul(4);            // scale to bytes
+        
+            // 3) Peek stack: right = [SP], left = [SP+4]
+            let right = read_u32(ram, *sp);
+            let left  = if *sp + 4 < RAM_SIZE {
+                read_u32(ram, *sp + 4)
+            } else {
+                0
+            };
+        
+            // 4) Evaluate the condition
+            let take = match cond {
+                0 => left  == right,       // eq
+                1 => left  != right,       // ne
+                2 => (left as i32) <  (right as i32), // lt
+                3 => (left as i32) >  (right as i32), // gt
+                4 => (left as i32) <= (right as i32), // le
+                5 => (left as i32) >= (right as i32), // ge
+                _ => false,                       // 110/111 invalid
+            };
+        
+            // 5) If true, jump PC by offset (undoing the earlier pc+=4)
+            if take {
+                let base_pc = (*pc as i32) - 4;
+                let new_pc  = base_pc.wrapping_add(offset);
+                if new_pc >= 0 && (new_pc as usize) < RAM_SIZE {
+                    *pc = new_pc as usize;
+                } else {
+                    eprintln!("Invalid if<cond> jump to {:#X}", new_pc);
+                    return false;
+                }
+            }
+        }
+        
+        
+        
+        
+    
         _ => (),
     }
 
