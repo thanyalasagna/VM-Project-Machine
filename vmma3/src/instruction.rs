@@ -33,6 +33,55 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
     *pc += 4;
 
     match opcode {
+        0x0 => {
+            let subcode = (instr >> 24) & 0xF;
+            match subcode {
+                // swap(sp + from, sp + to)
+                0x1 => {
+                    let from_encoded = ((instr >> 12) & 0xFFF) as i16;
+                    let to_encoded   =  (instr         & 0xFFF) as i16;
+                    let from_offset  = ((from_encoded << 4) >> 2) as isize;
+                    let to_offset    = ((to_encoded   << 4) >> 2) as isize;
+                    let base = *sp as isize;
+                    let a = (base + from_offset) as usize;
+                    let b = (base + to_offset)   as usize;
+                    if a + 4 <= RAM_SIZE && b + 4 <= RAM_SIZE {
+                        let va = read_u32(ram, a);
+                        let vb = read_u32(ram, b);
+                        write_u32(ram, a, vb);
+                        write_u32(ram, b, va);
+                    }
+                }
+        
+                // input: read a line, parse dec/hex/bin, push value
+                0x4 => {
+                    use std::io::{self, Write};
+                    print!("> ");
+                    io::stdout().flush().unwrap();
+                    let mut line = String::new();
+                    io::stdin().read_line(&mut line).unwrap();
+                    let s = line.trim();
+                    let val = if s.starts_with("0x") || s.starts_with("0X") {
+                        u32::from_str_radix(&s[2..], 16).unwrap_or(0)
+                    } else if s.starts_with("0b") || s.starts_with("0B") {
+                        u32::from_str_radix(&s[2..], 2).unwrap_or(0)
+                    } else {
+                        s.parse::<u32>().unwrap_or(0)
+                    };
+                    push(sp, ram, val);
+                }
+        
+                // any other subcode (including exit)
+                _ => return false,
+            }
+        }
+        0x1 => { //pop opcode
+            let raw_offset   = (instr >> 2) & 0x00FF_FFFF; // 26 bits
+            let offset_bytes = if raw_offset == 0 { 4 } else { (raw_offset << 2) as usize };
+        
+            // move the stack pointer up, but never past the last valid 4-byte word
+            *sp = (*sp + offset_bytes).min(RAM_SIZE.saturating_sub(4));
+        }
         0x2 => {
             let subcode = (instr >> 24) & 0xF;
             let rhs = pop(sp, ram);
@@ -91,18 +140,83 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
 
             println!();
         }
+        0x7 => {
+            // 1) extract the 26-bit field from bits 27:2
+            let raw = (instr >> 2) & 0x03FF_FFFF;           // mask = (1<<26)-1
+        
+            // 2) sign-extend from 26 → 32 bits
+            let mut imm = raw as i32;
+            if (imm & (1 << 25)) != 0 {                     // if top bit of 26 is set
+                imm -= 1 << 26;
+            }
+        
+            // 3) scale to bytes
+            let offset = imm << 2;                          // multiply by 4
+        
+            // 4) PC was already bumped by 4, so undo that
+            let base_pc = (*pc as i32).wrapping_sub(4);
+            let new_pc  = base_pc.wrapping_add(offset);
+        
+            if new_pc >= 0 && (new_pc as usize) < RAM_SIZE {
+                *pc = new_pc as usize;
+            } else {
+                eprintln!("Invalid goto offset: jumping to {:#X}", new_pc);
+                return false;
+            }
+        }
+        0x9 => {
+            let cond_code = (instr >> 24) & 0x3; // bits 25–24
+            let offset = ((instr >> 2) & 0x00FF_FFFF) as i32;
+            let offset = offset << 2;
 
+            let val = read_u32(ram, *sp);
+
+            let should_jump = match cond_code {
+                0x0 => val == 0,                    // EZ
+                0x1 => val != 0,                    // NZ
+                0x2 => (val as i32) < 0,            // MI
+                0x3 => (val as i32) >= 0,           // PL
+                _ => false,
+            };
+
+            if should_jump {
+                let current_pc = *pc as i32 - 4;
+                let new_pc = current_pc.wrapping_add(offset);
+                if new_pc >= 0 && (new_pc as usize) < RAM_SIZE {
+                    *pc = new_pc as usize;
+                } else {
+                    eprintln!("Invalid ifez jump to {:#X}", new_pc);
+                    return false;
+                }
+            }
+        }
         0xD => {
             let fmt = instr & 0b11;
-            let offset = (((instr >> 2) as i32) << 2) as isize;
+        
+            // 1) grab only bits [27:2] (26-bit signed immediate)
+            let raw   = (instr >> 2) & 0x03FF_FFFF;    // mask = (1<<26)-1
+            let mut imm = raw as i32;
+        
+            // 2) if bit-25 is set, subtract 1<<26 to sign-extend
+            if (imm & (1 << 25)) != 0 {
+                imm -= 1 << 26;
+            }
+        
+            // 3) multiply by 4
+            let offset = (imm << 2) as isize;
+        
+            // 4) compute address relative to SP
             let addr = (*sp as isize + offset) as usize;
+        
+            // now safe to read four bytes at addr
             let val = read_u32(ram, addr);
+        
             match fmt {
-                0b00 => println!("{}", val),
+                0b00 => println!("{}",   val),
                 0b01 => println!("0x{:X}", val),
                 0b10 => println!("0b{:b}", val),
                 0b11 => println!("0o{:o}", val),
-                _ => (),
+                _    => (),
             }
         }
 
