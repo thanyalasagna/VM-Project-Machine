@@ -30,13 +30,10 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
     let instr = read_u32(ram, *pc);
     let opcode = (instr >> 28) & 0xF;
 
-    println!("PC: {:#05x}, SP: {}, OPCODE: {:#x}, INSTR: {:#010x}", *pc, *sp, opcode, instr);
-
     *pc += 4;
 
     match opcode {
         0x2 => {
-            // Binary arithmetic
             let subcode = (instr >> 24) & 0xF;
             let rhs = pop(sp, ram);
             let lhs = pop(sp, ram);
@@ -58,7 +55,6 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
         }
 
         0x3 => {
-            // Unary arithmetic
             let subcode = (instr >> 24) & 0xF;
             let val = pop(sp, ram);
             let result = match subcode {
@@ -74,29 +70,22 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
             let offset = (raw_offset << 2) as isize;
             let mut addr = (*sp as isize + offset) as usize;
 
-            println!(">> stprint from address: {}", addr);
-
             while addr + 4 <= RAM_SIZE {
                 let word = read_u32(ram, addr);
                 let bytes = word.to_le_bytes();
-                print!("   word @ {:#x}: {:02x?} → ", addr, bytes);
 
                 for &b in &bytes {
                     if b == 0x00 {
-                        println!("(null terminator hit)");
                         break;
-                    } else if b == 0x01 {
-                        print!("(cont) ");
-                        continue;
-                    } else {
+                    } else if b != 0x01 {
                         print!("{}", b as char);
                     }
                 }
 
-                println!();
                 if bytes.contains(&0x00) {
                     break;
                 }
+
                 addr += 4;
             }
 
@@ -136,7 +125,7 @@ pub fn execute_instruction(pc: &mut usize, sp: &mut usize, ram: &mut [u8]) -> bo
             push(sp, ram, signed);
         }
 
-        0x0 => return false, // Exit
+        0x0 => return false,
         _ => (),
     }
 
